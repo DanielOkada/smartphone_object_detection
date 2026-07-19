@@ -22,14 +22,16 @@ const videoCtx = videoCanvas.getContext("2d");
 // モデル
 //==============================
 
-const session = await ort.InferenceSession.create("/model/nanodet.onnx");
+const session = await ort.InferenceSession.create(
+    `${import.meta.env.BASE_URL}model/nanodet.onnx`,
+);
 const anchors = generateGridAnchors(INPUT_SIZE, INPUT_SIZE);
 
 //==============================
 // COCOクラス
 //==============================
 
-const response = await fetch("/coco_names.json");
+const response = await fetch(`${import.meta.env.BASE_URL}coco_names.json`);
 const classNames = await response.json();
 
 //==============================
