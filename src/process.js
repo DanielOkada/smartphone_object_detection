@@ -1,82 +1,190 @@
 import * as ort from "onnxruntime-web";
-const imageInput = document.getElementById("imageInput");
-const canvas = document.getElementById("canvas");
-const ctx = canvas.getContext("2d");
 import { generateGridAnchors, postProcess, nms } from "./postprocess";
 import { drawDetections } from "./draw";
 
-imageInput.addEventListener("change", async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+const INPUT_SIZE = 320;
 
-    const img = new Image();
-    img.src = URL.createObjectURL(file);
-    await img.decode();
+//==============================
+// Canvas
+//==============================
 
-    canvas.width = 320;
-    canvas.height = 320;
+// 表示用
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
 
-    ctx.drawImage(img, 0, 0, 320, 320);
-});
+// 推論用（非表示）
+const videoCanvas = document.getElementById("videoCanvas");
+videoCanvas.width = INPUT_SIZE;
+videoCanvas.height = INPUT_SIZE;
+const videoCtx = videoCanvas.getContext("2d");
+
+//==============================
+// モデル
+//==============================
 
 const session = await ort.InferenceSession.create("/model/nanodet.onnx");
-// // 入力名と出力名を確認
-// console.log(session.inputNames);
-// console.log(session.outputNames);
+const anchors = generateGridAnchors(INPUT_SIZE, INPUT_SIZE);
 
-const detectButton = document.getElementById("detectButton");
+//==============================
+// COCOクラス
+//==============================
+
+const response = await fetch("/coco_names.json");
+const classNames = await response.json();
+
+//==============================
+// FPS
+//==============================
+
+let frameCount = 0;
+let lastTime = performance.now();
+let fps = 0;
+
+function updateFps() {
+    frameCount++;
+
+    const now = performance.now();
+    const elapsed = now - lastTime;
+
+    if (elapsed >= 1000) {
+        fps = (frameCount * 1000) / elapsed;
+        frameCount = 0;
+        lastTime = now;
+    }
+
+    return fps;
+}
+
+//==============================
+// preprocess
+//==============================
 
 function preprocess(imageData) {
     const { data, width, height } = imageData;
 
-    // CHW形式
     const input = new Float32Array(3 * width * height);
-
     const channelSize = width * height;
 
     for (let y = 0; y < height; y++) {
         for (let x = 0; x < width; x++) {
-            const pixelIndex = (y * width + x) * 4;
-
-            const r = data[pixelIndex] / 255.0;
-            const g = data[pixelIndex + 1] / 255.0;
-            const b = data[pixelIndex + 2] / 255.0;
-
+            const pixel = (y * width + x) * 4;
             const index = y * width + x;
 
-            // CHW
-            input[index] = r;
-            input[channelSize + index] = g;
-            input[channelSize * 2 + index] = b;
+            input[index] = data[pixel] / 255.0;
+            input[channelSize + index] = data[pixel + 1] / 255.0;
+            input[channelSize * 2 + index] = data[pixel + 2] / 255.0;
         }
     }
 
     return input;
 }
 
-detectButton.addEventListener("click", async () => {
-    const response = await fetch("/coco_names.json");
-    const classNames = await response.json();
+//==============================
+// log
+//==============================
 
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+const logElement = document.getElementById("log");
 
-    const inputData = preprocess(imageData); // ImageData → Float32Array
+function log(...args) {
+    console.log(...args);
 
-    const tensor = new ort.Tensor("float32", inputData, [1, 3, 320, 320]);
+    logElement.textContent +=
+        args
+            .map((x) =>
+                typeof x === "object" ? JSON.stringify(x, null, 2) : String(x),
+            )
+            .join(" ") + "\n";
+
+    logElement.scrollTop = logElement.scrollHeight;
+}
+
+window.onerror = (message, source, line, column, error) => {
+    log("=== ERROR ===");
+    log(message);
+
+    if (error?.stack) {
+        log(error.stack);
+    }
+};
+
+//==============================
+// Camera
+//==============================
+
+const video = document.getElementById("video");
+
+const stream = await navigator.mediaDevices.getUserMedia({
+    video: {
+        facingMode: "environment",
+    },
+    audio: false,
+});
+
+video.srcObject = stream;
+
+await new Promise((resolve) => {
+    video.onloadedmetadata = resolve;
+});
+
+await video.play();
+
+// 表示Canvasはカメラサイズに合わせる
+canvas.width = video.videoWidth;
+canvas.height = video.videoHeight;
+
+//==============================
+// Detect
+//==============================
+
+async function detect() {
+    //---------- 推論用 ----------
+    videoCtx.drawImage(video, 0, 0, INPUT_SIZE, INPUT_SIZE);
+
+    const imageData = videoCtx.getImageData(0, 0, INPUT_SIZE, INPUT_SIZE);
+
+    const inputData = preprocess(imageData);
+
+    const tensor = new ort.Tensor("float32", inputData, [
+        1,
+        3,
+        INPUT_SIZE,
+        INPUT_SIZE,
+    ]);
+
+    const start = performance.now();
 
     const outputs = await session.run({
         data: tensor,
     });
 
-    const output = outputs["output"];
+    const inferenceTime = performance.now() - start;
 
-    const anchors = generateGridAnchors(320, 320);
-
-    const detections = postProcess(output.cpuData, anchors, 320, 320);
+    const detections = postProcess(
+        outputs.output.cpuData,
+        anchors,
+        INPUT_SIZE,
+        INPUT_SIZE,
+    );
 
     const results = nms(detections);
 
-    console.log(results);
+    //---------- 表示 ----------
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-    drawDetections(ctx, detections, classNames);
-});
+    const scaleX = canvas.width / INPUT_SIZE;
+    const scaleY = canvas.height / INPUT_SIZE;
+
+    drawDetections(ctx, results, classNames, scaleX, scaleY);
+
+    ctx.font = "20px sans-serif";
+
+    ctx.fillStyle = "lime";
+    ctx.fillText(`FPS: ${updateFps().toFixed(1)}`, 10, 25);
+
+    ctx.fillStyle = "white";
+    ctx.fillText(`Inference: ${inferenceTime.toFixed(1)} ms`, 10, 50);
+
+    requestAnimationFrame(detect);
+}
+
+detect();

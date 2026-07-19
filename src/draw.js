@@ -11,7 +11,13 @@ const COLORS = [
     "#008080",
 ];
 
-export function drawDetections(ctx, detections, classNames) {
+export function drawDetections(
+    ctx,
+    detections,
+    classNames,
+    scaleX = 1,
+    scaleY = 1,
+) {
     ctx.lineWidth = 2;
     ctx.font = "16px sans-serif";
     ctx.textBaseline = "top";
@@ -21,24 +27,29 @@ export function drawDetections(ctx, detections, classNames) {
 
         const color = COLORS[classId % COLORS.length];
 
+        // 表示座標へ変換
+        const sx1 = x1 * scaleX;
+        const sy1 = y1 * scaleY;
+        const sx2 = x2 * scaleX;
+        const sy2 = y2 * scaleY;
+
         // Bounding Box
         ctx.strokeStyle = color;
-        ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+        ctx.strokeRect(sx1, sy1, sx2 - sx1, sy2 - sy1);
 
         // ラベル
         const className = classNames[classId];
-
         const label = `${className} ${(score * 100).toFixed(1)}%`;
 
         const textWidth = ctx.measureText(label).width;
         const textHeight = 18;
 
-        let textX = x1;
-        let textY = y1 - textHeight;
+        let textX = sx1;
+        let textY = sy1 - textHeight;
 
         // 上にはみ出る場合はボックス内に表示
         if (textY < 0) {
-            textY = y1;
+            textY = sy1;
         }
 
         // ラベル背景

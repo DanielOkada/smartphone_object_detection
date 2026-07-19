@@ -5,11 +5,20 @@
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>Document</title>
     </head>
+    <style>
+        #canvas {
+            width: 100%;
+            height: auto;
+        }
+    </style>
     <body>
         <script type="module" src="src/process.js"></script>
 
-        <input type="file" id="imageInput" accept="image/*" />
-        <button id="detectButton">推論</button>
-        <canvas id="canvas"></canvas>
+        <pre id="log"></pre>
+
+        <video id="video" autoplay playsinline hidden></video>
+        <canvas id="videoCanvas" hidden></canvas>
+
+        <canvas id="canvas" width="320" height="320"></canvas>
     </body>
 </html>
